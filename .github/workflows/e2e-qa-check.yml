@@ -2,8 +2,6 @@ name: "QA: E2E Guideline Check"
 
 on:
   pull_request:
-    paths:
-      - "e2e-tests/**" # Only triggers if files in this folder change
 
 jobs:
   check-guidelines:
@@ -13,9 +11,53 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: GitHub Copilot Review
-        uses: github/copilot-review-action@v1
         with:
-          # Point directly to your sample markdown file
-          instructions-path: .github/instructions/qa-coding-guidelines.instructions.md
+          fetch-depth: 0
+
+      - name: Validate E2E QA Guidelines
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          mapfile -t files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- 'e2e-tests/**/*.ts')
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No e2e TypeScript files changed; skipping guideline validation."
+            exit 0
+          fi
+
+          failed=0
+
+          for file in "${files[@]}"; do
+            echo "Checking $file"
+
+            if [[ "$file" != *.spec.ts ]]; then
+              echo "[ERROR] $file: test file must use .spec.ts suffix"
+              failed=1
+            fi
+
+            if grep -nE 'setTimeout\s*\(|sleep\s*\(' "$file"; then
+              echo "[ERROR] $file: hardcoded delays are not allowed"
+              failed=1
+            fi
+
+            if grep -nE 'getByRole\s*\(|getByText\s*\(|getByLabel\s*\(' "$file"; then
+              echo "[ERROR] $file: use data-test-id selectors instead of role/text/label selectors"
+              failed=1
+            fi
+
+            if grep -nE 'locator\s*\(("|\x27)(?!\[data-test-id=).+' "$file"; then
+              echo "[ERROR] $file: locator selectors must use [data-test-id=...]"
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more QA guideline checks failed."
+            exit 1
+          fi
+
+          echo "All QA guideline checks passed."
