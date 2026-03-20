@@ -4,6 +4,7 @@ test("Sample login validation", async ({ page }) => {
   await page.goto("https://example.com");
 
   // VIOLATION 1: Using a CSS class instead of data-test-id
+  // Some random unused commit
   const usernameInput = page.locator(".input-field-login");
   await usernameInput.fill("testuser test");
 
