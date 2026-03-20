@@ -1,0 +1,232 @@
+name: "QA Standards Check"
+
+on:
+  pull_request:
+    paths:
+      - "e2e-tests/**"
+      - "**/*.{ts,js,tsx,jsx}"
+    branches: [ main, develop ]
+
+jobs:
+  check-e2e-standards:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate E2E Standards
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          mapfile -t files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- 'e2e-tests/**/*.ts')
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No e2e TypeScript files changed; skipping validation."
+            exit 0
+          fi
+
+          failed=0
+          violations=()
+
+          for file in "${files[@]}"; do
+            echo "Checking $file"
+
+            # Check file naming
+            if [[ "$file" != *.spec.ts ]]; then
+              echo "[ERROR] $file: test file must use .spec.ts suffix"
+              violations+=("$file: test file must use .spec.ts suffix")
+              failed=1
+            fi
+
+            # Check for hardcoded delays
+            if grep -nE 'setTimeout\s*\(|sleep\s*\(' "$file" >/dev/null 2>&1; then
+              echo "[ERROR] $file: hardcoded delays are not allowed"
+              violations+=("$file: hardcoded delays are not allowed")
+              failed=1
+            fi
+
+            # Check for CSS class selectors
+            if grep -nE 'locator\s*\(("|\x27)\.' "$file" >/dev/null 2>&1; then
+              echo "[ERROR] $file: CSS class selectors are not allowed, use data-test-id"
+              violations+=("$file: CSS class selectors are not allowed, use data-test-id")
+              failed=1
+            fi
+
+            # Check for XPath selectors
+            if grep -nE 'locator\s*\(("|\x27)//' "$file" >/dev/null 2>&1; then
+              echo "[ERROR] $file: XPath selectors are not allowed, use data-test-id"
+              violations+=("$file: XPath selectors are not allowed, use data-test-id")
+              failed=1
+            fi
+
+            # Check for async/await
+            if ! grep -q 'async (' "$file"; then
+              echo "[ERROR] $file: test functions must be async"
+              violations+=("$file: test functions must be async")
+              failed=1
+            fi
+          done
+
+          # Create summary comment
+          if [ "$failed" -ne 0 ]; then
+            echo "violations<<EOF" >> $GITHUB_OUTPUT
+            echo "## 🚫 E2E Standards Violations" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            for violation in "${violations[@]}"; do
+              echo "- ❌ $violation" >> $GITHUB_OUTPUT
+            done
+            echo "" >> $GITHUB_OUTPUT
+            echo "### How to fix:" >> $GITHUB_OUTPUT
+            echo "1. Use .spec.ts suffix for test files" >> $GITHUB_OUTPUT
+            echo "2. Replace CSS class selectors with data-test-id" >> $GITHUB_OUTPUT
+            echo "3. Replace setTimeout with dynamic waits like waitForSelector" >> $GITHUB_OUTPUT
+            echo "4. Ensure test functions are async" >> $GITHUB_OUTPUT
+            echo "violations<<EOF" >> $GITHUB_OUTPUT
+            echo "E2E standards check failed"
+            exit 1
+          fi
+
+          echo "All E2E standards checks passed."
+        id: e2e-check
+
+      - name: Comment on PR
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context;
+            const issue_number = context.issue.number;
+            const violations = `${{ steps.e2e-check.outputs.violations }}`;
+            
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number,
+              body: violations
+            });
+
+  check-code-quality:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Code Quality
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          mapfile -t files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- '**/*.{ts,js,tsx,jsx}')
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No TypeScript/JavaScript files changed; skipping validation."
+            exit 0
+          fi
+
+          failed=0
+          violations=()
+
+          for file in "${files[@]}"; do
+            echo "Checking $file"
+
+            # Check for eval usage
+            if grep -nE 'eval\s*\(' "$file" >/dev/null 2>&1; then
+              echo "[ERROR] $file: eval() is not allowed for security reasons"
+              violations+=("$file: eval() is not allowed for security reasons")
+              failed=1
+            fi
+
+            # Check for Function constructor
+            if grep -nE 'new Function' "$file" >/dev/null 2>&1; then
+              echo "[ERROR] $file: Function constructor is not allowed"
+              violations+=("$file: Function constructor is not allowed")
+              failed=1
+            fi
+
+            # Check for var usage
+            if grep -nE '\bvar\s+' "$file" >/dev/null 2>&1; then
+              echo "[ERROR] $file: use let/const instead of var"
+              violations+=("$file: use let/const instead of var")
+              failed=1
+            fi
+
+            # Check for magic numbers (basic check)
+            if grep -nE '\b(1[0-9]{2}|[2-9][0-9]{2,})\b' "$file" >/dev/null 2>&1; then
+              echo "[WARNING] $file: consider using named constants for large numbers"
+              violations+=("$file: consider using named constants for large numbers")
+              # Don't fail for warnings, just comment
+            fi
+
+            # Check for any type usage
+            if grep -nE ':\s*any\b' "$file" >/dev/null 2>&1; then
+              echo "[ERROR] $file: avoid using 'any' type"
+              violations+=("$file: avoid using 'any' type")
+              failed=1
+            fi
+          done
+
+          # Create summary comment
+          if [ "$failed" -ne 0 ] || [ ${#violations[@]} -gt 0 ]; then
+            echo "violations<<EOF" >> $GITHUB_OUTPUT
+            echo "## 📋 Code Quality Issues" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            for violation in "${violations[@]}"; do
+              if [[ "$violation" == *"WARNING"* ]]; then
+                echo "- ⚠️ $violation" >> $GITHUB_OUTPUT
+              else
+                echo "- ❌ $violation" >> $GITHUB_OUTPUT
+              fi
+            done
+            echo "" >> $GITHUB_OUTPUT
+            echo "### How to fix:" >> $GITHUB_OUTPUT
+            echo "1. Remove eval() and Function constructor usage" >> $GITHUB_OUTPUT
+            echo "2. Replace var with let/const" >> $GITHUB_OUTPUT
+            echo "3. Use proper TypeScript types instead of any" >> $GITHUB_OUTPUT
+            echo "4. Use named constants for magic numbers" >> $GITHUB_OUTPUT
+            echo "violations<<EOF" >> $GITHUB_OUTPUT
+            
+            if [ "$failed" -ne 0 ]; then
+              echo "Code quality check failed"
+              exit 1
+            else
+              echo "Code quality check passed with warnings"
+            fi
+          fi
+
+          echo "All code quality checks passed."
+        id: code-quality-check
+
+      - name: Comment on PR
+        if: failure() || steps.code-quality-check.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context;
+            const issue_number = context.issue.number;
+            const violations = `${{ steps.code-quality-check.outputs.violations }}`;
+            
+            if (violations && violations.trim() !== '') {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body: violations
+              });
+            }

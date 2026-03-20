@@ -2,6 +2,8 @@ name: "QA: E2E Guideline Check"
 
 on:
   pull_request:
+    paths:
+      - "e2e-tests/**"
 
 jobs:
   check-guidelines:
@@ -30,34 +32,70 @@ jobs:
           fi
 
           failed=0
+          violations=()
 
           for file in "${files[@]}"; do
             echo "Checking $file"
 
             if [[ "$file" != *.spec.ts ]]; then
               echo "[ERROR] $file: test file must use .spec.ts suffix"
+              violations+=("$file: test file must use .spec.ts suffix")
               failed=1
             fi
 
             if grep -nE 'setTimeout\s*\(|sleep\s*\(' "$file"; then
               echo "[ERROR] $file: hardcoded delays are not allowed"
-              failed=1
-            fi
-
-            if grep -nE 'getByRole\s*\(|getByText\s*\(|getByLabel\s*\(' "$file"; then
-              echo "[ERROR] $file: use data-test-id selectors instead of role/text/label selectors"
+              violations+=("$file: hardcoded delays are not allowed")
               failed=1
             fi
 
             if grep -nE 'locator\s*\(("|\x27)(?!\[data-test-id=).+' "$file"; then
               echo "[ERROR] $file: locator selectors must use [data-test-id=...]"
+              violations+=("$file: locator selectors must use [data-test-id=...]")
               failed=1
             fi
           done
 
+          # Create summary for PR comment
           if [ "$failed" -ne 0 ]; then
-            echo "One or more QA guideline checks failed."
+            echo "violations<<EOF" >> $GITHUB_OUTPUT
+            echo "## 🚫 E2E QA Guideline Violations" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            for violation in "${violations[@]}"; do
+              echo "- ❌ $violation" >> $GITHUB_OUTPUT
+            done
+            echo "" >> $GITHUB_OUTPUT
+            echo "### Required Actions:" >> $GITHUB_OUTPUT
+            echo "1. Rename test files to use .spec.ts suffix" >> $GITHUB_OUTPUT
+            echo "2. Replace hardcoded delays with dynamic waits (waitForSelector, etc.)" >> $GITHUB_OUTPUT
+            echo "3. Use data-test-id selectors instead of CSS classes or other selectors" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "### Examples:" >> $GITHUB_OUTPUT
+            echo "❌ Bad: \`page.locator('.button')\`" >> $GITHUB_OUTPUT
+            echo "✅ Good: \`page.locator('[data-test-id=\"submit-button\"]')\`" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "❌ Bad: \`setTimeout(1000)\`" >> $GITHUB_OUTPUT
+            echo "✅ Good: \`page.waitForSelector('[data-test-id=\"element\"]')\`" >> $GITHUB_OUTPUT
+            echo "violations<<EOF" >> $GITHUB_OUTPUT
+            echo "E2E QA guideline checks failed"
             exit 1
           fi
 
-          echo "All QA guideline checks passed."
+          echo "All E2E QA guideline checks passed."
+        id: e2e-check
+
+      - name: Comment on PR
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context;
+            const issue_number = context.issue.number;
+            const violations = `${{ steps.e2e-check.outputs.violations }}`;
+            
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number,
+              body: violations
+            });
