@@ -5,6 +5,7 @@ test("Sample login validation", async ({ page }) => {
 
   // VIOLATION 1: Using a CSS class instead of data-test-id
   const usernameInput = page.locator(".input-field-login");
+  await page.waitForTimeout(2000);
   await usernameInput.fill("testuser");
 
   // VIOLATION 2: Using hardcoded sleep instead of dynamic wait
