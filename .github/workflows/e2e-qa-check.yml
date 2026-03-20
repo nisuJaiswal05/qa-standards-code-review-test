@@ -1,13 +1,21 @@
-name: "QA: E2E Guideline Status"
+name: "QA: E2E Guideline Check"
 
 on:
   pull_request:
     paths:
-      - "e2e-tests/**"
+      - "e2e-tests/**" # Only triggers if files in this folder change
 
 jobs:
-  status-check:
+  check-guidelines:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write # Required for posting review comments
     steps:
-      - name: Acknowledge E2E Changes
-        run: echo "E2E changes detected. Copilot review will start automatically."
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: GitHub Copilot Review
+        uses: github/copilot-review-action@v1
+        with:
+          # Point directly to your sample markdown file
+          instructions-path: .github/instructions/qa-coding-guidelines.instructions.md
