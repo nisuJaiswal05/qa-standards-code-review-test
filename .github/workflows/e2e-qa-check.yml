@@ -18,4 +18,4 @@ jobs:
         uses: github/copilot-review-action@v1
         with:
           # Point directly to your sample markdown file
-          instructions-path: .github/instructions/e2e-quality.instructions.md
+          instructions-path: .github/instructions/qa-coding-guidelines.instructions.md
