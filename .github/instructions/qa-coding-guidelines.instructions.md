@@ -8,7 +8,7 @@ applyTo: "e2e-tests/**/*.ts"
 
 - **Use data-test-id**: Always use `data-test-id` attributes for element selectors
 - **No CSS classes**: Do not use fragile CSS classes or XPath selectors
-- **Semantic selectors**: Use semantic selectors like `getByRole()`, `getByText()`, `getByLabel()` when appropriate
+- **Consistency**: Keep selectors consistent and stable by preferring `data-test-id` across the test suite
 
 ## Async Handling
 

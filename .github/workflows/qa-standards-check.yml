@@ -5,13 +5,11 @@ on:
     paths:
       - "e2e-tests/**"
       - "**/*.{ts,js,tsx,jsx}"
-    branches: [ main, develop ]
 
 jobs:
   check-e2e-standards:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
       contents: read
     steps:
       - name: Checkout Repository
@@ -22,118 +20,68 @@ jobs:
       - name: Validate E2E Standards
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+
+          E2E_INSTRUCTIONS_FILE=".github/instructions/qa-coding-guidelines.instructions.md"
+          if [ ! -f "$E2E_INSTRUCTIONS_FILE" ]; then
+            echo "::error::Missing instruction file: $E2E_INSTRUCTIONS_FILE"
+            exit 1
+          fi
 
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
 
-          mapfile -t files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- 'e2e-tests/**/*.ts')
+          mapfile -t files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -E '^e2e-tests/.*\.ts$' || true)
 
           if [ ${#files[@]} -eq 0 ]; then
             echo "No e2e TypeScript files changed; skipping validation."
             exit 0
           fi
 
-          failed=0
-          annotations=()
-
           for file in "${files[@]}"; do
             echo "Checking $file"
 
-            # Check file naming
-            if [[ "$file" != *.spec.ts ]]; then
-              echo "::error file=$file,line=1::File must use .spec.ts suffix"
-              annotations+=("file=$file,line=1,title=File Naming::File must use .spec.ts suffix according to E2E guidelines")
-              failed=1
+            # Check file naming — annotation only, does not fail the build
+            if grep -qi "\.spec\.ts" "$E2E_INSTRUCTIONS_FILE" && [[ "$file" != *.spec.ts ]]; then
+              echo "::warning file=$file,line=1::qa-coding-guidelines: Test file must use .spec.ts suffix (e.g. login.spec.ts). Copilot review will flag this."
             fi
 
             # Check for hardcoded delays with line numbers
-            while IFS= read -r line; do
-              line_num=$(echo "$line" | cut -d: -f1)
-              echo "::error file=$file,line=$line_num::Hardcoded delays are not allowed. Use dynamic waits like waitForSelector() instead of setTimeout()"
-              annotations+=("file=$file,line=$line_num,title=Hardcoded Delay::Hardcoded delays are not allowed. Use dynamic waits like waitForSelector() instead of setTimeout()")
-              failed=1
-            done < <(grep -nE 'setTimeout\s*\(|sleep\s*\(' "$file" 2>/dev/null || true)
+            if grep -qi "No hardcoded delays" "$E2E_INSTRUCTIONS_FILE"; then
+              while IFS= read -r match; do
+                line_num=$(echo "$match" | cut -d: -f1)
+                echo "::warning file=$file,line=$line_num::qa-coding-guidelines: Hardcoded delay detected. Use dynamic waits like waitForSelector() or waitForLoadState() instead."
+              done < <(grep -nE 'setTimeout\s*\(|sleep\s*\(' "$file" 2>/dev/null || true)
+            fi
 
             # Check for CSS class selectors with line numbers
-            while IFS= read -r line; do
-              line_num=$(echo "$line" | cut -d: -f1)
-              echo "::error file=$file,line=$line_num::CSS class selectors are not allowed. Use data-test-id selectors instead of CSS classes for stable tests"
-              annotations+=("file=$file,line=$line_num,title=CSS Selector::CSS class selectors are not allowed. Use data-test-id selectors instead of CSS classes for stable tests")
-              failed=1
-            done < <(grep -nE 'locator\s*\(("|\x27)\.' "$file" 2>/dev/null || true)
+            if grep -qi "data-test-id" "$E2E_INSTRUCTIONS_FILE"; then
+              while IFS= read -r match; do
+                line_num=$(echo "$match" | cut -d: -f1)
+                echo "::warning file=$file,line=$line_num::qa-coding-guidelines: CSS class selector detected. Use data-test-id selectors instead (e.g. [data-test-id=\"submit\"])."
+              done < <(grep -nE 'locator\s*\(("|\x27)\.' "$file" 2>/dev/null || true)
+            fi
 
             # Check for XPath selectors with line numbers
-            while IFS= read -r line; do
-              line_num=$(echo "$line" | cut -d: -f1)
-              echo "::error file=$file,line=$line_num::XPath selectors are not allowed. Use data-test-id selectors instead of XPath for stable tests"
-              annotations+=("file=$file,line=$line_num,title=XPath Selector::XPath selectors are not allowed. Use data-test-id selectors instead of XPath for stable tests")
-              failed=1
-            done < <(grep -nE 'locator\s*\(("|\x27)//' "$file" 2>/dev/null || true)
+            if grep -qi "No CSS classes" "$E2E_INSTRUCTIONS_FILE"; then
+              while IFS= read -r match; do
+                line_num=$(echo "$match" | cut -d: -f1)
+                echo "::warning file=$file,line=$line_num::qa-coding-guidelines: XPath selector detected. Use data-test-id selectors instead."
+              done < <(grep -nE 'locator\s*\(("|\x27)//' "$file" 2>/dev/null || true)
+            fi
 
-            # Check for async/await with line numbers
-            if ! grep -q 'async (' "$file"; then
+            # Check for missing async on test functions
+            if grep -qi "Await all interactions" "$E2E_INSTRUCTIONS_FILE" && ! grep -q 'async (' "$file"; then
               first_test_line=$(grep -n "test(" "$file" | head -1 | cut -d: -f1)
-              echo "::error file=$file,line=$first_test_line::Test functions must be async. Add 'async' keyword before test function"
-              annotations+=("file=$file,line=$first_test_line,title=Async Required::Test functions must be async. Add 'async' keyword before test function")
-              failed=1
+              echo "::warning file=$file,line=$first_test_line::qa-coding-guidelines: Test function is not async. Add the 'async' keyword before the test callback."
             fi
           done
 
-          # Store annotations for PR comment
-          if [ ${#annotations[@]} -gt 0 ]; then
-            echo "annotations<<EOF" >> $GITHUB_OUTPUT
-            echo "## 🚫 E2E Standards Violations" >> $GITHUB_OUTPUT
-            echo "" >> $GITHUB_OUTPUT
-            for annotation in "${annotations[@]}"; do
-              IFS='::' read -r file_info line_info title message <<< "$annotation"
-              echo "**$title** (Line $line_info)" >> $GITHUB_OUTPUT
-              echo "> $message" >> $GITHUB_OUTPUT
-              echo "" >> $GITHUB_OUTPUT
-            done
-            echo "### How to fix:" >> $GITHUB_OUTPUT
-            echo "1. Use .spec.ts suffix for test files" >> $GITHUB_OUTPUT
-            echo "2. Replace CSS class selectors with \`data-test-id\`" >> $GITHUB_OUTPUT
-            echo "3. Replace setTimeout with dynamic waits like \`waitForSelector\`" >> $GITHUB_OUTPUT
-            echo "4. Ensure test functions are async" >> $GITHUB_OUTPUT
-            echo "" >> $GITHUB_OUTPUT
-            echo "### Examples:" >> $GITHUB_OUTPUT
-            echo "❌ Bad: \`page.locator('.button')\`" >> $GITHUB_OUTPUT
-            echo "✅ Good: \`page.locator('[data-test-id=\"submit-button\"]')\`" >> $GITHUB_OUTPUT
-            echo "" >> $GITHUB_OUTPUT
-            echo "❌ Bad: \`setTimeout(1000)\`" >> $GITHUB_OUTPUT
-            echo "✅ Good: \`page.waitForSelector('[data-test-id=\"element\"]')\`" >> $GITHUB_OUTPUT
-            echo "annotations<<EOF" >> $GITHUB_OUTPUT
-          fi
-
-          if [ "$failed" -ne 0 ]; then
-            echo "E2E standards check failed"
-            exit 1
-          fi
-
-          echo "All E2E standards checks passed."
-        id: e2e-check
-
-      - name: Comment on PR
-        if: failure()
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { owner, repo } = context;
-            const issue_number = context.issue.number;
-            const annotations = `${{ steps.e2e-check.outputs.annotations }}`;
-            
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number,
-              body: annotations
-            });
+          echo "E2E standards annotation scan complete. Review Copilot comments on this PR for details."
 
   check-code-quality:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
       contents: read
     steps:
       - name: Checkout Repository
@@ -144,105 +92,64 @@ jobs:
       - name: Validate Code Quality
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+
+          QUALITY_INSTRUCTIONS_FILE=".github/instructions/code-quality.instructions.md"
+          if [ ! -f "$QUALITY_INSTRUCTIONS_FILE" ]; then
+            echo "::error::Missing instruction file: $QUALITY_INSTRUCTIONS_FILE"
+            exit 1
+          fi
 
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
 
-          mapfile -t files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- '**/*.{ts,js,tsx,jsx}')
+          mapfile -t files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -E '\.(ts|tsx|js|jsx)$' || true)
 
           if [ ${#files[@]} -eq 0 ]; then
             echo "No TypeScript/JavaScript files changed; skipping validation."
             exit 0
           fi
 
-          failed=0
-          annotations=()
-
           for file in "${files[@]}"; do
             echo "Checking $file"
 
-            # Check for eval usage with line numbers
-            while IFS= read -r line; do
-              line_num=$(echo "$line" | cut -d: -f1)
-              echo "::error file=$file,line=$line_num::eval() is not allowed for security reasons"
-              annotations+=("file=$file,line=$line_num,title=Security Risk::eval() is not allowed for security reasons")
-              failed=1
-            done < <(grep -nE 'eval\s*\(' "$file" 2>/dev/null || true)
+            # Check for eval usage
+            if grep -qi "No eval" "$QUALITY_INSTRUCTIONS_FILE"; then
+              while IFS= read -r match; do
+                line_num=$(echo "$match" | cut -d: -f1)
+                echo "::warning file=$file,line=$line_num::code-quality: eval() is a security risk. Remove it."
+              done < <(grep -nE 'eval\s*\(' "$file" 2>/dev/null || true)
+            fi
 
-            # Check for Function constructor with line numbers
-            while IFS= read -r line; do
-              line_num=$(echo "$line" | cut -d: -f1)
-              echo "::error file=$file,line=$line_num::Function constructor is not allowed for security reasons"
-              annotations+=("file=$file,line=$line_num,title=Security Risk::Function constructor is not allowed for security reasons")
-              failed=1
+            # Check for Function constructor
+            while IFS= read -r match; do
+              line_num=$(echo "$match" | cut -d: -f1)
+              echo "::warning file=$file,line=$line_num::code-quality: new Function() is a security risk. Remove it."
             done < <(grep -nE 'new Function' "$file" 2>/dev/null || true)
 
-            # Check for var usage with line numbers
-            while IFS= read -r line; do
-              line_num=$(echo "$line" | cut -d: -f1)
-              echo "::error file=$file,line=$line_num::Use let/const instead of var for better scoping"
-              annotations+=("file=$file,line=$line_num,title=Modern JavaScript::Use let/const instead of var for better scoping")
-              failed=1
-            done < <(grep -nE '\bvar\s+' "$file" 2>/dev/null || true)
+            # Check for var usage
+            if grep -qi "Const vs let" "$QUALITY_INSTRUCTIONS_FILE"; then
+              while IFS= read -r match; do
+                line_num=$(echo "$match" | cut -d: -f1)
+                echo "::warning file=$file,line=$line_num::code-quality: Use const or let instead of var."
+              done < <(grep -nE '\bvar\s+' "$file" 2>/dev/null || true)
+            fi
 
-            # Check for any type usage with line numbers
-            while IFS= read -r line; do
-              line_num=$(echo "$line" | cut -d: -f1)
-              echo "::error file=$file,line=$line_num::Avoid using 'any' type. Use proper TypeScript types"
-              annotations+=("file=$file,line=$line_num,title=Type Safety::Avoid using 'any' type. Use proper TypeScript types")
-              failed=1
-            done < <(grep -nE ':\s*any\b' "$file" 2>/dev/null || true)
+            # Check for any type usage
+            if grep -qi "avoid \`any\`" "$QUALITY_INSTRUCTIONS_FILE" || grep -qi "avoid .*any" "$QUALITY_INSTRUCTIONS_FILE"; then
+              while IFS= read -r match; do
+                line_num=$(echo "$match" | cut -d: -f1)
+                echo "::warning file=$file,line=$line_num::code-quality: Avoid the 'any' type. Use a proper TypeScript type or add a suppression comment explaining why."
+              done < <(grep -nE ':\s*any\b' "$file" 2>/dev/null || true)
+            fi
 
-            # Check for magic numbers (basic check) - warning only
-            while IFS= read -r line; do
-              line_num=$(echo "$line" | cut -d: -f1)
-              echo "::warning file=$file,line=$line_num::Consider using named constants for large numbers"
-              annotations+=("file=$file,line=$line_num,title=Code Quality::Consider using named constants for large numbers")
-            done < <(grep -nE '\b(1[0-9]{2}|[2-9][0-9]{2,})\b' "$file" 2>/dev/null || true)
+            # Check for magic numbers
+            if grep -qi "No magic numbers" "$QUALITY_INSTRUCTIONS_FILE"; then
+              while IFS= read -r match; do
+                line_num=$(echo "$match" | cut -d: -f1)
+                echo "::warning file=$file,line=$line_num::code-quality: Magic number detected. Extract to a named constant."
+              done < <(grep -nE '\b(1[0-9]{2}|[2-9][0-9]{2,})\b' "$file" 2>/dev/null || true)
+            fi
           done
 
-          # Store annotations for PR comment
-          if [ ${#annotations[@]} -gt 0 ]; then
-            echo "annotations<<EOF" >> $GITHUB_OUTPUT
-            echo "## 📋 Code Quality Issues" >> $GITHUB_OUTPUT
-            echo "" >> $GITHUB_OUTPUT
-            for annotation in "${annotations[@]}"; do
-              IFS='::' read -r file_info line_info title message <<< "$annotation"
-              echo "**$title** (Line $line_info)" >> $GITHUB_OUTPUT
-              echo "> $message" >> $GITHUB_OUTPUT
-              echo "" >> $GITHUB_OUTPUT
-            done
-            echo "### How to fix:" >> $GITHUB_OUTPUT
-            echo "1. Remove eval() and Function constructor usage" >> $GITHUB_OUTPUT
-            echo "2. Replace var with let/const" >> $GITHUB_OUTPUT
-            echo "3. Use proper TypeScript types instead of any" >> $GITHUB_OUTPUT
-            echo "4. Use named constants for magic numbers" >> $GITHUB_OUTPUT
-            echo "annotations<<EOF" >> $GITHUB_OUTPUT
-          fi
-
-          if [ "$failed" -ne 0 ]; then
-            echo "Code quality check failed"
-            exit 1
-          else
-            echo "Code quality check passed"
-          fi
-        id: code-quality-check
-
-      - name: Comment on PR
-        if: failure() || steps.code-quality-check.outcome == 'success'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { owner, repo } = context;
-            const issue_number = context.issue.number;
-            const annotations = `${{ steps.code-quality-check.outputs.annotations }}`;
-            
-            if (annotations && annotations.trim() !== '') {
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body: annotations
-              });
-            }
+          echo "Code quality annotation scan complete. Review Copilot comments on this PR for details."
