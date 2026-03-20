@@ -1,0 +1,61 @@
+name: "Comprehensive QA Standards Check"
+
+on:
+  pull_request:
+    paths:
+      - "e2e-tests/**"
+      - "**/*.{ts,js,tsx,jsx}"
+    branches: [ main, develop ]
+
+jobs:
+  check-e2e-standards:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: E2E Standards Review
+        uses: github/copilot-review-action@v1
+        with:
+          instructions-path: .github/instructions/qa-coding-guidelines.instructions.md
+
+  check-code-quality:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Code Quality Review
+        uses: github/copilot-review-action@v1
+        with:
+          instructions-path: .github/instructions/code-quality.instructions.md
+
+  check-performance-standards:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Performance Testing Review
+        uses: github/copilot-review-action@v1
+        with:
+          instructions-path: .github/instructions/performance-testing.instructions.md
+
+  check-security-standards:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Security Testing Review
+        uses: github/copilot-review-action@v1
+        with:
+          instructions-path: .github/instructions/security-testing.instructions.md
