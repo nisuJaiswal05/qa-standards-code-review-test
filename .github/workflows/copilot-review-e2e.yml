@@ -1,9 +1,9 @@
-name: "Request Copilot Code Review for E2E Changes"
+name: "Copilot Review Context for E2E Changes"
 
-# Triggers only when a PR is opened or updated with e2e-tests changes.
-# Automatically requests GitHub Copilot as a reviewer so the AI review
-# runs with the guidelines defined in .github/copilot-instructions.md
-# and the path-scoped rules in .github/instructions/.
+# Triggers when a PR is opened or updated with e2e-tests changes.
+# Copilot review is requested automatically by repository settings.
+# This workflow validates required instruction files and posts the
+# active-guidelines summary comment for contributors.
 
 on:
   pull_request:
@@ -12,12 +12,12 @@ on:
       - "e2e-tests/**"
 
 permissions:
-  pull-requests: write # Required to add a reviewer to the PR
+  pull-requests: write # Required to post PR comments
   contents: read # Required for actions/checkout
 
 jobs:
-  request-copilot-review:
-    name: Request Copilot Code Review
+  copilot-review-context:
+    name: Copilot Review Context
     runs-on: ubuntu-latest
 
     steps:
@@ -38,6 +38,36 @@ jobs:
           fi
           echo "Instruction file verified: $INSTRUCTIONS_FILE"
 
+      - name: Assert code-quality instruction file exists
+        shell: bash
+        run: |
+          INSTRUCTIONS_FILE=".github/instructions/code-quality.instructions.md"
+          if [ ! -f "$INSTRUCTIONS_FILE" ]; then
+            echo "::error::Required file $INSTRUCTIONS_FILE is missing. Copilot review context cannot be completed without it."
+            exit 1
+          fi
+          echo "Instruction file verified: $INSTRUCTIONS_FILE"
+
+      - name: Assert security-testing instruction file exists
+        shell: bash
+        run: |
+          INSTRUCTIONS_FILE=".github/instructions/security-testing.instructions.md"
+          if [ ! -f "$INSTRUCTIONS_FILE" ]; then
+            echo "::error::Required file $INSTRUCTIONS_FILE is missing. Copilot review context cannot be completed without it."
+            exit 1
+          fi
+          echo "Instruction file verified: $INSTRUCTIONS_FILE"
+
+      - name: Assert performance-testing instruction file exists
+        shell: bash
+        run: |
+          INSTRUCTIONS_FILE=".github/instructions/performance-testing.instructions.md"
+          if [ ! -f "$INSTRUCTIONS_FILE" ]; then
+            echo "::error::Required file $INSTRUCTIONS_FILE is missing. Copilot review context cannot be completed without it."
+            exit 1
+          fi
+          echo "Instruction file verified: $INSTRUCTIONS_FILE"
+
       - name: Assert copilot-instructions.md exists
         shell: bash
         run: |
@@ -47,54 +77,6 @@ jobs:
             exit 1
           fi
           echo "Copilot instructions file verified: $COPILOT_INSTRUCTIONS"
-
-      - name: Request Copilot as reviewer
-        # Requests GitHub Copilot code review via the app_slugs field.
-        # This uses the correct GitHub API shape for app-based reviewers.
-        #
-        # PREREQUISITE: Copilot Code Review must be enabled first:
-        #   Repository Settings → Copilot → Code review → Enable
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          REPO="${{ github.repository }}"
-
-          echo "Requesting Copilot code review for PR #$PR_NUMBER in $REPO"
-
-          # Capture both the response body and HTTP status for diagnostics.
-          # Copilot Code Review is a GitHub App reviewer — use app_slugs, not reviewers.
-          RESPONSE=$(
-            curl --silent --write-out "\nHTTP_STATUS:%{http_code}" \
-              -X POST \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/requested_reviewers" \
-              -d '{"reviewers":[],"team_reviewers":[],"app_slugs":["copilot-pull-request-reviewer"]}'
-          )
-
-          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
-          BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
-
-          echo "API response body: $BODY"
-          echo "HTTP status: $HTTP_STATUS"
-
-          if [ "$HTTP_STATUS" -eq 201 ]; then
-            echo "Copilot review successfully requested for PR #$PR_NUMBER"
-          elif [ "$HTTP_STATUS" -eq 422 ]; then
-            # 422 can mean the app slug is already a reviewer, OR Copilot review is not enabled.
-            # Log the body so the exact reason is visible in the workflow run logs.
-            echo "::warning::HTTP 422 received. This usually means Copilot Code Review is not enabled in repository Settings, or it is already requested."
-            echo "Go to: Settings → Copilot → Code review → Enable, then re-run this workflow."
-          elif [ "$HTTP_STATUS" -eq 404 ]; then
-            echo "::error::HTTP 404 — app slug 'copilot-pull-request-reviewer' not found. Ensure Copilot Code Review is enabled: Settings → Copilot → Code review."
-            exit 1
-          else
-            echo "::error::Unexpected HTTP $HTTP_STATUS when requesting Copilot review. See response body above."
-            exit 1
-          fi
 
       - name: Post instruction summary as PR comment
         # Posts a one-time comment listing which guideline files will govern
@@ -118,11 +100,15 @@ jobs:
 
           This PR touches `e2e-tests/` files. GitHub Copilot will review it using the following instruction files:
 
+          > Prerequisite: Repository setting **Automatically ask Copilot to review pull requests** is enabled.
+
           | File | Applies To |
           |------|-----------|
           | [`.github/copilot-instructions.md`](.github/copilot-instructions.md) | All files (global) |
           | [`.github/instructions/qa-coding-guidelines.instructions.md`](.github/instructions/qa-coding-guidelines.instructions.md) | `e2e-tests/**/*.ts` |
           | [`.github/instructions/code-quality.instructions.md`](.github/instructions/code-quality.instructions.md) | `**/*.{ts,js,tsx,jsx}` |
+          | [`.github/instructions/security-testing.instructions.md`](.github/instructions/security-testing.instructions.md) | `**/*security*.{ts,js,spec.ts}` |
+          | [`.github/instructions/performance-testing.instructions.md`](.github/instructions/performance-testing.instructions.md) | `**/*performance*.{ts,js,spec.ts}` |
 
           ### Key rules Copilot will enforce:
           - ✅ `data-test-id` selectors only (no CSS classes, no XPath)
