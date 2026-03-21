@@ -54,6 +54,14 @@ jobs:
               done < <(grep -nE 'setTimeout\s*\(|sleep\s*\(' "$file" 2>/dev/null || true)
             fi
 
+            # Check for Playwright fixed timeout waits with line numbers
+            if grep -qi "No hardcoded delays" "$E2E_INSTRUCTIONS_FILE"; then
+              while IFS= read -r match; do
+                line_num=$(echo "$match" | cut -d: -f1)
+                echo "::warning file=$file,line=$line_num::qa-coding-guidelines: Fixed wait timeout detected. Avoid waitForTimeout(number); use dynamic waits instead."
+              done < <(grep -nE 'waitForTimeout\s*\(\s*[0-9]+' "$file" 2>/dev/null || true)
+            fi
+
             # Check for CSS class selectors with line numbers
             if grep -qi "data-test-id" "$E2E_INSTRUCTIONS_FILE"; then
               while IFS= read -r match; do
@@ -149,6 +157,14 @@ jobs:
                 line_num=$(echo "$match" | cut -d: -f1)
                 echo "::warning file=$file,line=$line_num::code-quality: Avoid the 'any' type. Use a proper TypeScript type or add a suppression comment explaining why."
               done < <(grep -nE ':\s*any\b' "$file" 2>/dev/null || true)
+            fi
+
+            # Check for type assertions using 'as any'
+            if grep -qi "avoid \`any\`" "$QUALITY_INSTRUCTIONS_FILE" || grep -qi "avoid .*any" "$QUALITY_INSTRUCTIONS_FILE"; then
+              while IFS= read -r match; do
+                line_num=$(echo "$match" | cut -d: -f1)
+                echo "::warning file=$file,line=$line_num::code-quality: Avoid 'as any' assertions. Use a specific type or justify suppression explicitly."
+              done < <(grep -nE '\bas\s+any\b' "$file" 2>/dev/null || true)
             fi
 
             # Check for magic numbers
