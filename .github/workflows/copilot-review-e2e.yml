@@ -49,12 +49,11 @@ jobs:
           echo "Copilot instructions file verified: $COPILOT_INSTRUCTIONS"
 
       - name: Request Copilot as reviewer
-        # Uses the GitHub CLI (pre-installed on ubuntu-latest) to add
-        # Copilot as a reviewer. This triggers the AI code review using
-        # the guidelines in .github/copilot-instructions.md.
+        # Requests GitHub Copilot code review via the app_slugs field.
+        # This uses the correct GitHub API shape for app-based reviewers.
         #
-        # PREREQUISITE: GitHub Copilot Code Review must be enabled for this
-        # repository: Settings → Copilot → "Enable Copilot code review".
+        # PREREQUISITE: Copilot Code Review must be enabled first:
+        #   Repository Settings → Copilot → Code review → Enable
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -64,25 +63,36 @@ jobs:
 
           echo "Requesting Copilot code review for PR #$PR_NUMBER in $REPO"
 
-          # Request copilot as a reviewer via the GitHub API.
-          # The reviewer slug recognised by GitHub for Copilot AI review is "copilot".
-          HTTP_STATUS=$(
-            curl --silent --output /dev/null --write-out "%{http_code}" \
+          # Capture both the response body and HTTP status for diagnostics.
+          # Copilot Code Review is a GitHub App reviewer — use app_slugs, not reviewers.
+          RESPONSE=$(
+            curl --silent --write-out "\nHTTP_STATUS:%{http_code}" \
               -X POST \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer $GH_TOKEN" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "https://api.github.com/repos/$REPO/pulls/$PR_NUMBER/requested_reviewers" \
-              -d '{"reviewers":["copilot"]}'
+              -d '{"reviewers":[],"team_reviewers":[],"app_slugs":["copilot-pull-request-reviewer"]}'
           )
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
+
+          echo "API response body: $BODY"
+          echo "HTTP status: $HTTP_STATUS"
 
           if [ "$HTTP_STATUS" -eq 201 ]; then
             echo "Copilot review successfully requested for PR #$PR_NUMBER"
           elif [ "$HTTP_STATUS" -eq 422 ]; then
-            # 422 is returned if Copilot is already a requested reviewer — not an error.
-            echo "Copilot review already requested for PR #$PR_NUMBER (HTTP 422 — reviewer already present)"
+            # 422 can mean the app slug is already a reviewer, OR Copilot review is not enabled.
+            # Log the body so the exact reason is visible in the workflow run logs.
+            echo "::warning::HTTP 422 received. This usually means Copilot Code Review is not enabled in repository Settings, or it is already requested."
+            echo "Go to: Settings → Copilot → Code review → Enable, then re-run this workflow."
+          elif [ "$HTTP_STATUS" -eq 404 ]; then
+            echo "::error::HTTP 404 — app slug 'copilot-pull-request-reviewer' not found. Ensure Copilot Code Review is enabled: Settings → Copilot → Code review."
+            exit 1
           else
-            echo "::error::Failed to request Copilot review (HTTP $HTTP_STATUS). Ensure GitHub Copilot Code Review is enabled: Settings → Copilot → Code review."
+            echo "::error::Unexpected HTTP $HTTP_STATUS when requesting Copilot review. See response body above."
             exit 1
           fi
 

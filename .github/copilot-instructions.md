@@ -93,5 +93,5 @@ Enforce rules from `.github/instructions/performance-testing.instructions.md`:
 1. **Severity labelling**: Mark violations as `🔴 BLOCKING` (must fix before merge) or `🟡 SUGGESTION` (should fix, not blocking).
 2. **Inline comments**: Place review comments on the exact line of the violation, not as a summary-only note.
 3. **Explain the rule**: Every comment must reference the specific guideline it enforces (e.g., *"qa-coding-guidelines: No hardcoded delays — use `waitForSelector` instead."*).
-4. **Don't duplicate passing checks**: If the existing workflows (`e2e-qa-check.yml`, `qa-standards-check.yml`) already flag an issue with a CI error, note it but do not re-raise it as a blocking comment.
+4. **Don't duplicate passing checks**: If the existing workflow (`qa-standards-check.yml`) already flags an issue with a CI error, note it but do not re-raise it as a blocking comment.
 5. **Praise good patterns**: When a PR correctly uses `data-test-id` selectors, proper `async/await`, or page-object abstraction, acknowledge it with a positive comment.
