@@ -14,5 +14,5 @@ test("Sample login validation", async ({ page }) => {
   await submitButton.click();
 
   await expect(page).toHaveURL(/dashboard/);
-  console.log("irreleaant console");
+  console.log("irreleaant console updated");
 });
